@@ -1,0 +1,20 @@
+config:
+    aws:region: us-east-1
+    aws:profile: dev
+    availabilityZoneCount: 3
+    vpcCidrBlock: "10.0.0.0/16"
+    cidrBlock: "10.0"
+    subnetSuffix: ".0/24"
+    state: "available"
+    vpcName: "my-vpc"
+    igwName: "my-igw"
+    public: "public"
+    private: "private"
+    publicsubnet: "publicsubnet"
+    privatesubnet: "privatesubnet"
+    public-rt: "public-rt"
+    private-rt: "private-rt"
+    publicRoute: "publicRoute"
+    destinationCidr: "0.0.0.0/0"
+    public-route-association: "public-route-association"
+    private-route-association: "private-route-association"
