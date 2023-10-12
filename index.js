@@ -1,89 +1,142 @@
-import * as aws from "@pulumi/aws";
+const pulumi = require("@pulumi/pulumi");
+const aws = require("@pulumi/aws");
 
-import * as pulumi from "@pulumi/pulumi";
-
-const webAppConfig = new pulumi.Config("webApp");
-
+const config = new pulumi.Config();
 
 
-const vpc = new aws.ec2.Vpc("webappVPC", {
-  cidrBlock: webAppConfig.get("cidrBlock"),
-});
+const availabilityZoneCount = config.getNumber("availabilityZoneCount");
+const vpcCidrBlock = config.require("vpcCidrBlock");
+const cidrBlock = config.require("cidrBlock");
+const publicSubnets = [];
+const privateSubnets = [];
 
-// Variable to hold subnet details
 
-aws.getAvailabilityZones({ state: "available" }).then((response) => {
-  const subnetDetails = [];
 
-  const zones = response.names.slice(0, 3);
 
-  let priv_zone = true;
 
-  for (let i = 0; i < 6; i++) {
-    const subnet = new aws.ec2.Subnet(`subnet${i}`, {
-      vpcId: vpc.id,
+const subnetSuffix = config.require("subnetSuffix");
 
-      cidrBlock: `10.0.${i}.0/24`,
+const state = config.require("state");
+const vpcName = config.require("vpcName");
+const igwName = config.require("igwName");
+const publicSta = config.require("public");
 
-      availabilityZone: `${zones[Math.floor(i / 2)]}`,
 
-      tags: {
-        Name: `webapp-subnet${i}`,
+const destinationCidr = config.require("destinationCidr");
+const public_route_association = config.require("public-route-association");
+const private_route_association = config.require("private-route-association");
+const privateSta = config.require("private");
 
-        Type: priv_zone ? "public" : "private",
-      },
+const public_Subnet = config.require("publicsubnet");
+const private_Subnet = config.require("privatesubnet");
+
+const public_rt = config.require("public-rt");
+const private_rt = config.require("private-rt");
+const public_Route = config.require("publicRoute");
+
+
+
+
+// Define a function to get the first N availability zones
+function getFirstNAvailabilityZones(data, n) {
+    const availableAZCount = data.names.length;
+
+    if (availableAZCount >= n) {
+        return data.names.slice(0, n);
+    } 
+    else {
+    
+        return data.names;
+    }
+}
+
+const availabilityZoneNames = []; // Initialize an array to store availability zone names
+
+aws.getAvailabilityZones({ state: `${state}` }).then(data => {
+    const availabilityZones = getFirstNAvailabilityZones(data, availabilityZoneCount); // Choose the first 3 AZs if available AZs are greater than 3
+    const vpc = new aws.ec2.Vpc(`${vpcName}`, {
+        cidrBlock: `${vpcCidrBlock}`,
+        availabilityZones: availabilityZones,
+    });
+    const internetGateway = new aws.ec2.InternetGateway(`${igwName}`, {
+        vpcId: vpc.id, // Associate the Internet Gateway with the VPC
     });
 
-    priv_zone = !priv_zone;
+    for (let i = 0; i < availabilityZones.length; i++) {
+        const az = availabilityZones[i];
+        availabilityZoneNames.push(az);
+    }
+    const calculateCidrBlock = (index, subnetType) => {
+        const subnetNumber = subnetType === `${publicSta}` ? index : index + availabilityZoneCount;
+        return `${cidrBlock}.${subnetNumber}${subnetSuffix}`;
+    };
 
-    subnetDetails.push(subnet);
-  }
+    // Create subnets within each availability zone
+    for (let i = 0; i < availabilityZoneNames.length; i++) {
+        const az = availabilityZoneNames[i];
 
-  // Create an Internet Gateway and attach it to the VPC
+        // Create public and private subnets using aws.ec2.Subnet
+        const publicSubnet = new aws.ec2.Subnet(`${public_Subnet}-${az}-${i}`, {
+            vpcId: vpc.id,
+            cidrBlock: calculateCidrBlock(i,`${publicSta}`),
+            availabilityZone: az,
+            mapPublicIpOnLaunch: true,
+            tags: {
+                Name: `${public_Subnet}`,
+            },
+        });
 
-  const ig = new aws.ec2.InternetGateway("webapp-ig", {
-    vpcId: vpc.id,
-  });
+        const privateSubnet = new aws.ec2.Subnet(`${private_Subnet}-${az}-${i}`, {
+            vpcId: vpc.id,
+            cidrBlock: calculateCidrBlock(i,`${privateSta}`),
+            availabilityZone: az,
+            tags: {
+                Name: `${private_Subnet}`,
+            },
+        });
 
-  // Create the public route table
+        publicSubnets.push(publicSubnet);
+        privateSubnets.push(privateSubnet);
+    }
 
-  const publicRouteTable = new aws.ec2.RouteTable("webapp-publicRouteTable", {
-    vpcId: vpc.id,
-  });
+    const publicRouteTable = new aws.ec2.RouteTable(`${public_rt}`, {
+        vpcId: vpc.id,
+        tags: {
+            Name: `${public_rt}`,
+        },
+    });
 
-  // Create the private route table
+    const privateRouteTable = new aws.ec2.RouteTable(`${private_rt}`, {
+        vpcId: vpc.id,
+        tags: {
+            Name: `${private_rt}`,
+        },
+    });
+    const publicRoute = new aws.ec2.Route(`${public_Route}`, {
+        routeTableId: publicRouteTable.id,
+        destinationCidrBlock: `${destinationCidr}`,
+        gatewayId: internetGateway.id,
+    });
 
-  const privateRouteTable = new aws.ec2.RouteTable("webapp-privateRouteTable", {
-    vpcId: vpc.id,
-  });
+    // Associate the public subnets with the public route table
+    publicSubnets.forEach((subnet,i) => {
+        new aws.ec2.RouteTableAssociation(`${public_route_association}-${subnet.availabilityZone}-${i}`, {
+            subnetId: subnet.id,
+            routeTableId: publicRouteTable.id,
+            tags:{
+                Name: `${public_route_association}`,
+            },
+        });
+    });
 
-  // Loop through the created subnets and add the public ones to the public route table and private ones to the private route table
-
-  for (let i = 0; i < subnetDetails.length; i++) {
-    const routeTableAssociation = new aws.ec2.RouteTableAssociation(
-      `webapp-routeTableAssociation${i}`,
-
-      {
-        subnetId: subnetDetails[i].id,
-
-        routeTableId: i % 2 == 0 ? publicRouteTable.id : privateRouteTable.id,
-      }
-    );
-  }
-
-  // Create a public route
-
-  const publicRoute = new aws.ec2.Route("webapp-publicRoute", {
-    routeTableId: publicRouteTable.id,
-
-    destinationCidrBlock: webAppConfig.get("destinationCidrBlock"),
-
-    gatewayId: ig.id,
-  });
+    // Associate the private subnets with the private route table
+    privateSubnets.forEach((subnet,i) => {
+        new aws.ec2.RouteTableAssociation(`${private_route_association}-${subnet.availabilityZone}-${i}`, {
+            subnetId: subnet.id,
+            routeTableId: privateRouteTable.id,
+            tags:{
+                Name: `${private_route_association}`,
+            },
+        });
+    });
 });
-
-// Create 3 public and 3 private subnets
-
-// Export VPC ID
-
-export const vpcId = vpc.id;
