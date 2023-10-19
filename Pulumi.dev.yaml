@@ -18,3 +18,6 @@ config:
     destinationCidr: "0.0.0.0/0"
     public-route-association: "public-route-association"
     private-route-association: "private-route-association"
+    operating-system: "debian"
+    region: us-east-1
+    owner: "303561834123"
