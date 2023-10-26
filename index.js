@@ -9,7 +9,6 @@ const cidrBlock = config.require("cidrBlock");
 const publicSubnets = [];
 const privateSubnets = [];
 
-
 const subnetSuffix = config.require("subnetSuffix");
 
 const state = config.require("state");
@@ -43,8 +42,6 @@ function getFirstNAvailabilityZones(data, n) {
 
 const availabilityZoneNames = []; // Initialize an array to store availability zone names
 async function getAMIObject() {
-
-
   const latestAmi = await aws.ec2.getAmi({
     owners: [owner],
     filters: [
@@ -170,34 +167,103 @@ aws.getAvailabilityZones({ state: `${state}` }).then((data) => {
     "application-security-group",
     {
       vpcId: vpcId,
+      vpcId: vpc.id,
       ingress: [
         {
-          protocol: "tcp",
           fromPort: 22,
           toPort: 22,
-          cidrBlocks: ["0.0.0.0/0"],
+          protocol: "tcp",
+          cidrBlocks: ["0.0.0.0/0"], // Allow SSH from anywhere
         },
         {
-          protocol: "tcp",
           fromPort: 80,
           toPort: 80,
-          cidrBlocks: ["0.0.0.0/0"],
+          protocol: "tcp",
+          cidrBlocks: ["0.0.0.0/0"], // Allow HTTP from anywhere
         },
         {
-          protocol: "tcp",
           fromPort: 443,
           toPort: 443,
-          cidrBlocks: ["0.0.0.0/0"],
+          protocol: "tcp",
+          cidrBlocks: ["0.0.0.0/0"], // Allow HTTPS from anywhere
         },
         {
-          protocol: "tcp",
           fromPort: 3000,
           toPort: 3000,
-          cidrBlocks: ["0.0.0.0/0"],
+          protocol: "tcp",
+          cidrBlocks: ["0.0.0.0/0"], // Allow your application traffic from anywhere
+        },
+      ],
+      egress: [
+        {
+          fromPort: 3306, // Allow outbound traffic on port 3306
+          toPort: 3306, // Allow outbound traffic on port 3306
+          protocol: "tcp", // TCP protocol
+          cidrBlocks: ["0.0.0.0/0"], // Allow all destinations
         },
       ],
     }
   );
+
+
+  const dbSecGroup = new aws.ec2.SecurityGroup("db-sg", {
+    vpcId: vpc.id,
+    ingress: [
+        {
+            fromPort: 3306, // For MariaDB
+            toPort: 3306, // For MariaDB
+            protocol: "tcp",
+            securityGroups: [securityGroup.id], // Referencing the application security group as source
+        },
+    ],
+    egress: [
+        {
+            fromPort: 0,
+            toPort: 0,
+            protocol: "-1",
+            cidrBlocks: ["0.0.0.0/0"],
+        },
+    ],
+  });
+
+
+
+
+const rdsSubnetGroup = new aws.rds.SubnetGroup("myrdsgroup", {
+  subnetIds: privateSubnets.map(subnet => subnet.id),
+  description: "My RDS subnet group for private subnets",
+});
+
+
+const rdsParameterGroup = new aws.rds.ParameterGroup("customrdsparamgroup", {
+    family: "mysql8.0", // Replace with the appropriate RDS engine and version
+    parameters: [
+        {
+            name: "max_connections",
+            value: "100",
+        },
+        // Add more parameters as needed
+    ],
+});
+
+const rdsParameterGroupName = rdsParameterGroup.name;
+
+
+const rdsInstance = new aws.rds.Instance("rdsinstance", {
+  allocatedStorage: 20, // You can adjust the storage size as needed
+  storageType: "gp2",
+  engine: "mysql", // Replace with "postgresql" or "mariadb" as needed
+  instanceClass: "db.t2.micro", // Use the desired instance class
+  name: "csye6225",
+  username: "csye6225",
+  password: "masterpass", // Replace with a strong password
+  skipFinalSnapshot: true,
+  publiclyAccessible: false,
+  multiAz: false,
+  vpcSecurityGroupIds: [dbSecGroup.id], // Attach the Database Security Group created earlier
+  dbSubnetGroupName: rdsSubnetGroup, // Replace with your RDS subnet group
+  parameterGroupName:rdsParameterGroup, // Replace with your custom RDS parameter group
+});
 
   // Fetch the region and operating system from the loaded configuration
 
@@ -205,6 +271,39 @@ aws.getAvailabilityZones({ state: `${state}` }).then((data) => {
     ami: getAMIObject(), // Replace 'your_custom_ami_id' with the ID of your custom AMI.
     instanceType: "t2.micro", // Replace with the desired instance type.
     vpcSecurityGroupIds: [securityGroup.id],
+    dependsOn:rdsInstance,
+    userData:pulumi.interpolate `
+        #!/bin/bash
+        cd /home/admin/WebApp/
+        chmod +w .env
+        editable_file=".env"  
+        mysql_database=${rdsInstance.dbName}
+        mysql_user=${rdsInstance.username}
+        mysql_password=${rdsInstance.password}
+        mysql_port=${rdsInstance.port}
+        mysql_host=${rdsInstance.address}
+        db_dialect=${rdsInstance.engine}
+       
+        if [ -f "$editable_file" ]; then
+           
+        > "$editable_file"
+       
+            # Add new key-value pairs
+            echo "MYSQL_DATABASE=$mysql_database" >> "$editable_file"
+            echo "MYSQL_USER=$mysql_user" >> "$editable_file"
+            echo "MYSQL_PASSWORD=$mysql_password" >> "$editable_file"
+            echo "MYSQL_PORT=$mysql_port" >> "$editable_file"
+            echo "MYSQL_HOST=$mysql_host" >> "$editable_file"
+            echo "DB_DIALECT=$db_dialect" >> "$editable_file"
+       
+            echo "Cleared old data in $editable_file and added new key-value pairs."
+        else
+            echo "File $editable_file does not exist."
+        fi
+        sudo chown csye6225:csye6225 /home/admin/WebApp
+
+        sudo chmod 750 /home/admin/WebApp
+        `.apply(s => s.trim()),
     associatePublicIpAddress: true,
     subnetId: publicSubnets[0].id,
     // Replace 'your_subnet_id' with the desired subnet ID.
@@ -213,7 +312,7 @@ aws.getAvailabilityZones({ state: `${state}` }).then((data) => {
     rootBlockDevice: {
       volumeSize: 25, // Replace with the desired root volume size (in GB).
       volumeType: "gp2", // Specify the root volume type as General Purpose SSD (GP2).
-      deleteOnTermination: false, // Protect against accidental termination by setting this to false.
+      deleteOnTermination: true, // Protect against accidental termination by setting this to false.
     },
   });
 });
