@@ -28,7 +28,8 @@ const public_rt = config.require("public-rt");
 const private_rt = config.require("private-rt");
 const public_Route = config.require("publicRoute");
 const owner = config.require("owner");
-
+const MAILGUN_API_KEY = config.require('mailgunapi')
+const domainName = config.require('domainName')
 // Define a function to get the first N availability zones
 function getFirstNAvailabilityZones(data, n) {
   const availableAZCount = data.names.length;
@@ -324,6 +325,10 @@ aws.getAvailabilityZones({ state: `${state}` }).then((data) => {
     role: cloudAgentIAMRole.name,
   });
 
+  // Create an SNS topic
+const snsTopic = new aws.sns.Topic("myTopic");
+
+
 
   const dynamicString = pulumi.interpolate 
   `#!/bin/bash
@@ -336,6 +341,7 @@ aws.getAvailabilityZones({ state: `${state}` }).then((data) => {
   mysql_port=${rdsInstance.port}
   mysql_host=${rdsInstance.address}
   db_dialect=${rdsInstance.engine}
+  sns=${snsTopic.arn}
   if [ -f "$editable_file" ]; then
      
   > "$editable_file"
@@ -347,6 +353,7 @@ aws.getAvailabilityZones({ state: `${state}` }).then((data) => {
       echo "MYSQL_PORT=$mysql_port" >> "$editable_file"
       echo "MYSQL_HOST=$mysql_host" >> "$editable_file"
       echo "DB_DIALECT=$db_dialect" >> "$editable_file"
+      echo "SNS=$sns" >> "$editable_file"
  
       echo "Cleared old data in $editable_file and added new key-value pairs."
   else
@@ -478,6 +485,38 @@ const listener = new aws.lb.Listener("my-listener", {
     scalingTargetId: autoScalingGroup.id,
   });
 
+
+  const highUtilAlarm = new aws.cloudwatch.MetricAlarm("high-cpu-alarm", {
+    alarmName: "HighCPUUtilization",
+    comparisonOperator: "GreaterThanOrEqualToThreshold",
+    evaluationPeriods: 2,
+    metricName: "CPUUtilization",
+    namespace: "AWS/EC2",
+    period: 60,
+    statistic: "Average",
+    threshold: 5, // Threshold for high CPU utilization (in percent)
+    alarmDescription: "Alarm when server CPU exceeds 5%",
+    dimensions: {
+      AutoScalingGroupName: autoScalingGroup.name,
+    },
+    alarmActions: [scaleUpPolicy.arn],
+  });
+
+  const lowUtilAlarm = new aws.cloudwatch.MetricAlarm("low-cpu-alarm", {
+    alarmName: "LowCPUUtilization",
+    comparisonOperator: "LessThanOrEqualToThreshold",
+    evaluationPeriods: 2,
+    metricName: "CPUUtilization",
+    namespace: "AWS/EC2",
+    period: 60,
+    statistic: "Average",
+    threshold: 3, // Threshold for low CPU utilization (in percent)
+    alarmDescription: "Alarm when server CPU goes below 3%",
+    dimensions: {
+      AutoScalingGroupName: autoScalingGroup.name,
+    },
+    alarmActions: [scaleDownPolicy.arn],
+  });
   // Create an Application Load Balancer
 
   // const ec2Instance = new aws.ec2.Instance(instanceName, {
@@ -538,9 +577,219 @@ const listener = new aws.lb.Listener("my-listener", {
 
  
 
+
+
+const gcp = require("@pulumi/gcp");
+
+// Create a GCP Storage bucket
+// Create a GCP Storage bucket
+const bucket = new gcp.storage.Bucket("my-bucket", {
+  location: "us-east1",
+});
+
+// Create a GCP service account
+const serviceAccount = new gcp.serviceaccount.Account("my-service-account", {
+    accountId: "my-service-account",
+    project:"dev-1-406505"
+});
+
+// Create access keys for the service account
+const accessKeys = new gcp.serviceaccount.Key("my-access-keys", {
+    serviceAccountId: serviceAccount.accountId,
+});
+
+
+const iamBinding = new gcp.projects.IAMBinding('serviceAccountIAMBinding', {
+  project:"dev-1-406505" ,
+  role: 'roles/storage.admin',  // Adjust the role based on your needs
+  members: [serviceAccount.email.apply(email => `serviceAccount:${email}`)],
+},{dependsOn:serviceAccount});
+
+const objectCreatorIAMBinding = new gcp.storage.BucketIAMBinding('objectCreatorIAMBinding', {
+  bucket: bucket.name,
+  role: 'roles/storage.objectCreator',
+  members: [serviceAccount.email.apply(email => `serviceAccount:${email}`)],
+},{dependsOn:[bucket, serviceAccount]});
+
+
+
+const lambdaIamRole = new aws.iam.Role("lambdaIamRole", {
+  assumeRolePolicy: JSON.stringify({
+      Version: "2012-10-17",
+      Statement: [{
+          Action: "sts:AssumeRole",
+          Effect: "Allow",
+          Sid: "AssumeRolePolicy", 
+          Principal: {
+              Service: "lambda.amazonaws.com",
+          },
+      }],
+  }),
+  tags: {
+      Name: `lambdaamRole`,
+      Type: "public",
+    },
+});
+
+
+
+const lambdaPolicy = new aws.iam.Policy("lambdaPolicy", {
+  policy: {
+  "Version": "2012-10-17",
+  "Statement": [
+      {
+          "Effect": "Allow",
+          "Action": [
+              "logs:CreateLogGroup",
+              "logs:CreateLogStream",
+              "logs:PutLogEvents",
+              "lambda:InvokeFunction",
+          ],
+          "Resource": "*"
+      }
+  ]
+  },
+});
+
+const SNSPolicy = new aws.iam.Policy("SNSPolicy", {
+  policy: {
+  "Version": "2012-10-17",
+  "Statement": [
+      {
+          "Effect": "Allow",
+          "Action": [
+               "sns:Publish",
+          ],
+          "Resource": "*"
+      }
+  ]
+  },
+});
+
+const dynamodbPolicy = new aws.iam.Policy("dynamodbPolicy", {
+  policy: {
+      "Version": "2012-10-17",
+      "Statement": [
+          {
+              "Effect": "Allow",
+              "Action": [
+                  "dynamodb:GetItem",
+                  "dynamodb:PutItem",
+                  "dynamodb:UpdateItem",
+                  "dynamodb:BatchWriteItem",
+                  "dynamodb:Query",
+                  "dynamodb:Scan",
+                  "dynamodb:DeleteItem"
+              ],
+              "Resource": "*"
+          }
+      ]
+  },
+});
+
+
+const lambdaRolePolicyAttachment = new aws.iam.RolePolicyAttachment("lambdaRolePolicyAttachment", {
+  policyArn: lambdaPolicy.arn,
+  role: lambdaIamRole.name,
+  tags: {
+      Name: `lambdaRolePolicyAttachment`,
+      Type: "public",
+    },
+});
+
+const SNSPolicyAttachment = new aws.iam.RolePolicyAttachment("SNSPolicyAttachment", {
+  role: lambdaIamRole.name,
+  policyArn: SNSPolicy.arn,
+  tags: {
+      Name: `SNSPolicyAttachment`,
+      Type: "public",
+    },
+},{ dependsOn: [lambdaIamRole] });
+
+
+const dynamodbPolicyAttachment = new aws.iam.RolePolicyAttachment("dynamodbPolicyAttachment", {
+  policyArn: dynamodbPolicy.arn,
+  role: lambdaIamRole.name,
+  tags: {
+      Name: `dynamodbPolicyAttachment`,
+      Type: "public",
+    },
+});
+
+const dynamodb_table = new aws.dynamodb.Table("myTable",{
+  attributes: [
+      {
+          name: "emailId",
+          type: "S",
+      },
+      {
+          name: "status",
+          type: "S",
+      },
+      {
+          name: "timestamp",
+          type: "S",
+      }
+  ],
+  hashKey: "emailId",
+  readCapacity: 1,
+  writeCapacity: 1,
+  globalSecondaryIndexes: [
+      {
+          name: "status",
+          hashKey: "status",
+          projectionType: "ALL",
+          readCapacity: 1,
+          writeCapacity: 1,
+      },
+      {
+          name: "timestamp",
+          hashKey: "timestamp",
+          projectionType: "ALL",
+          readCapacity: 1,
+          writeCapacity: 1,
+      }
+  ],
+  })
+
+const lambdaFunction = new aws.lambda.Function("LambdaFunction", {
+  code: new pulumi.asset.AssetArchive({
+      ".": new pulumi.asset.FileArchive("/Users/rohanginde/Cloud/Assignment9/serverless/Archive.zip"),
+  }),
+  role: lambdaIamRole.arn,
+  handler: "index.handler",
+  runtime: "nodejs14.x", 
+  environment: {
+      variables: {
+        BUCKET_NAME: bucket.name,
+        DYNAMODB_TABLE_NAME: dynamodb_table.name,
+        GOOGLE_SERVICE_ACCOUNT_KEY: accessKeys.privateKey,
+        MAILGUN_API_KEY: MAILGUN_API_KEY,
+        DOMAIN:domainName
+      },
+  },
+  timeout: 60,
+},{ dependsOn: [serviceAccount] });
+
+
+const lambdaSubscription = new aws.sns.TopicSubscription("lambdaSubscription", {
+  protocol: "lambda",
+  endpoint: lambdaFunction.arn,
+  topic: snsTopic.arn,
+});
+
+const permission = new aws.lambda.Permission("myPermission", {
+  action: "lambda:InvokeFunction",
+  function: lambdaFunction.id,
+  principal: "sns.amazonaws.com",
+  sourceArn: snsTopic.arn
+});
+
+
+
   //Adding a record
 
-  const domainName = "dev.rohanswebapp.me";
+  
 
   const hostedZone = aws.route53.getZone({
     name: domainName,
@@ -566,3 +815,8 @@ const listener = new aws.lb.Listener("my-listener", {
   
   }, { dependsOn: [alb] });
 });
+
+
+
+
+
