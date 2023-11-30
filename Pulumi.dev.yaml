@@ -21,3 +21,8 @@ config:
     operating-system: "debian"
     region: us-east-1
     owner: "303561834123"
+    mailgunapi: 9d7bbab9fe6615b474e135d6c4b386a2-30b58138-44d2f805
+    domainName: "dev.rohanswebapp.me"
+    gcp:project: dev-1-406505
+
+    
