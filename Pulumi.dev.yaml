@@ -24,5 +24,6 @@ config:
     mailgunapi: 9d7bbab9fe6615b474e135d6c4b386a2-30b58138-44d2f805
     domainName: "dev.rohanswebapp.me"
     gcp:project: dev-1-406505
+    ssl-arn: arn:aws:acm:us-east-1:303561834123:certificate/ff49de36-d5b3-4a30-aecd-a25322ddbe82
 
     

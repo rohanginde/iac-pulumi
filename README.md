@@ -15,6 +15,7 @@
   - [Deploying Your IaaS](#deploying-your-iaas)
   - [Updating Your IaaS](#updating-your-iaas)
   - [Destroying Your IaaS](#destroying-your-iaas)
+  - [Command for SSL Certificate](#command-for-ssl-certificate)
   - [Conclusion](#conclusion)
 
 ## Introduction
@@ -86,6 +87,10 @@ Explain how to destroy IaaS resources when they are no longer needed:
 - Run the `pulumi destroy` command.
 - Include a caution about the irreversible nature of this action.
 
+
+
+## Command for SSL Certificate
+aws acm import-certificate --certificate <certificate_path> --certificate-chain <cc_path> --private-key <private_key_path>
 ## Conclusion
 
 Summarize the key points of the README, encourage users to explore the official Pulumi documentation, and provide cloud provider-specific documentation for advanced features and configurations.

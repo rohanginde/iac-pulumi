@@ -30,6 +30,7 @@ const public_Route = config.require("publicRoute");
 const owner = config.require("owner");
 const MAILGUN_API_KEY = config.require('mailgunapi')
 const domainName = config.require('domainName')
+const sslarn = config.require('ssl-arn')
 // Define a function to get the first N availability zones
 function getFirstNAvailabilityZones(data, n) {
   const availableAZCount = data.names.length;
@@ -426,8 +427,9 @@ const snsTopic = new aws.sns.Topic("myTopic");
   // Create a listener for HTTP traffic on port 80
 const listener = new aws.lb.Listener("my-listener", {
   loadBalancerArn: alb.arn,
-  port: 80,
-  protocol: "HTTP",
+  port: 443,
+  protocol: "HTTPS",
+  certificateArn: sslarn,
   defaultActions: [
       {
           type: "forward",
@@ -583,13 +585,13 @@ const gcp = require("@pulumi/gcp");
 
 // Create a GCP Storage bucket
 // Create a GCP Storage bucket
-const bucket = new gcp.storage.Bucket("my-bucket", {
+const bucket = new gcp.storage.Bucket("my-bucket2", {
   location: "us-east1",
 });
 
 // Create a GCP service account
-const serviceAccount = new gcp.serviceaccount.Account("my-service-account", {
-    accountId: "my-service-account",
+const serviceAccount = new gcp.serviceaccount.Account("my-service-account2", {
+    accountId: "my-service-account2",
     project:"dev-1-406505"
 });
 
